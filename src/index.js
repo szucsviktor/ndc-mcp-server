@@ -1,5 +1,5 @@
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
 import {
   ListResourcesRequestSchema,
   ReadResourceRequestSchema,
@@ -11,6 +11,7 @@ import {
 import fs from "fs/promises";
 import path from "path";
 import { fileURLToPath } from "url";
+import express from "express";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SCHEMAS_DIR = path.resolve(__dirname, "../schemas");
@@ -69,15 +70,16 @@ class NdcMcpServer {
         throw new McpError(ErrorCode.InvalidRequest, `Unsupported protocol: ${url.protocol}`);
       }
 
+      const version = url.hostname;
       const pathParts = url.pathname.split("/").filter(Boolean);
-      // Expected format: /{version}/schema/{filename}
-      if (pathParts.length < 3 || pathParts[1] !== "schema") {
-        throw new McpError(ErrorCode.InvalidRequest, `Invalid resource URI format: ${request.params.uri}`);
+      
+      // Expected format: /schema/{filename}
+      if (pathParts.length < 2 || pathParts[0] !== "schema") {
+        throw new McpError(ErrorCode.InvalidRequest, `Invalid resource URI format: ${request.params.uri}. Expected ndc://{version}/schema/{filename}`);
       }
 
-      const version = pathParts[0];
-      const filename = pathParts.slice(2).join("/");
-      const filePath = path.join(SCHEMAS_DIR, version, filename);
+      const filename = pathParts.slice(1).join("/");
+      const filePath = path.join(SCHEMAS_DIR, version, "raw", filename);
 
       try {
         const content = await fs.readFile(filePath, "utf-8");
@@ -141,6 +143,30 @@ class NdcMcpServer {
               required: ["filename"],
             },
           },
+          {
+            name: "get_schema_toc",
+            description: "Get a Table of Contents (list of elements and types) for a schema file",
+            inputSchema: {
+              type: "object",
+              properties: {
+                filename: { type: "string", description: "Schema filename" },
+                version: { type: "string", description: "NDC version", default: "26.1" },
+              },
+              required: ["filename"],
+            },
+          },
+          {
+            name: "get_element_definition",
+            description: "Get the XML definition block for a specific element or complexType",
+            inputSchema: {
+              type: "object",
+              properties: {
+                elementName: { type: "string", description: "The name of the element or complexType to find" },
+                version: { type: "string", description: "NDC version", default: "26.1" },
+              },
+              required: ["elementName"],
+            },
+          },
         ],
       };
     });
@@ -168,6 +194,18 @@ class NdcMcpServer {
           const { filename, version = "26.1", startLine, endLine } = args;
           const content = await this.readSchemaFile(version, filename, startLine, endLine);
           return { content: [{ type: "text", text: content }] };
+        }
+
+        case "get_schema_toc": {
+          const { filename, version = "26.1" } = args;
+          const toc = await this.getSchemaTOC(version, filename);
+          return { content: [{ type: "text", text: toc }] };
+        }
+
+        case "get_element_definition": {
+          const { elementName, version = "26.1" } = args;
+          const definition = await this.getElementDefinition(version, elementName);
+          return { content: [{ type: "text", text: definition }] };
         }
 
         default:
@@ -205,7 +243,7 @@ class NdcMcpServer {
   }
 
   async readSchemaFile(version, filename, startLine, endLine) {
-    const filePath = path.join(SCHEMAS_DIR, version, filename);
+    const filePath = path.join(SCHEMAS_DIR, version, "raw", filename);
     try {
       const content = await fs.readFile(filePath, "utf-8");
       if (startLine !== undefined || endLine !== undefined) {
@@ -220,13 +258,52 @@ class NdcMcpServer {
     }
   }
 
+  async getSchemaTOC(version, filename) {
+    const filePath = path.join(SCHEMAS_DIR, version, "raw", filename);
+    try {
+      const content = await fs.readFile(filePath, "utf-8");
+      const elements = [...content.matchAll(/<xs:element[^>]+name="([^"]+)"/g)].map(m => m[1]);
+      const types = [...content.matchAll(/<xs:complexType[^>]+name="([^"]+)"/g)].map(m => m[1]);
+      
+      let toc = `### Table of Contents for ${filename}\n\n`;
+      if (elements.length > 0) {
+        toc += `**Elements:**\n` + elements.map(e => `- ${e}`).join("\n") + "\n\n";
+      }
+      if (types.length > 0) {
+        toc += `**Complex Types:**\n` + types.map(t => `- ${t}`).join("\n") + "\n\n";
+      }
+      return toc || "No elements or types found.";
+    } catch (error) {
+      throw new McpError(ErrorCode.InternalError, `Error generating TOC: ${error.message}`);
+    }
+  }
+
+  async getElementDefinition(version, elementName) {
+    const files = await this.getSchemaFiles(version);
+    const complexTypeRegex = new RegExp(`<xs:complexType[^>]+name="${elementName}"[\\s\\S]*?<\\/xs:complexType>`, "g");
+    const elementRegex = new RegExp(`<xs:element[^>]+name="${elementName}"[\\s\\S]*?(\\/|\\/xs:element)>`, "g");
+
+    for (const file of files) {
+      const filePath = path.join(SCHEMAS_DIR, version, "raw", file);
+      const content = await fs.readFile(filePath, "utf-8");
+      
+      const typeMatch = content.match(complexTypeRegex);
+      if (typeMatch) return `File: ${file}\n\n${typeMatch[0]}`;
+
+      const elementMatch = content.match(elementRegex);
+      if (elementMatch) return `File: ${file}\n\n${elementMatch[0]}`;
+    }
+
+    return `Definition for "${elementName}" not found in NDC version ${version}.`;
+  }
+
   async searchInSchemas(version, query) {
     const files = await this.getSchemaFiles(version);
     const regex = new RegExp(query, "i");
     let results = "";
 
     for (const file of files) {
-      const filePath = path.join(SCHEMAS_DIR, version, file);
+      const filePath = path.join(SCHEMAS_DIR, version, "raw", file);
       const content = await fs.readFile(filePath, "utf-8");
       const lines = content.split("\n");
       
@@ -246,9 +323,30 @@ class NdcMcpServer {
   }
 
   async run() {
-    const transport = new StdioServerTransport();
-    await this.server.connect(transport);
-    console.error("NDC MCP Server running on stdio");
+    const app = express();
+    app.use(express.json());
+
+    let transport;
+
+    app.get("/sse", async (req, res) => {
+      console.error("New SSE connection established");
+      transport = new SSEServerTransport("/message", res);
+      await this.server.connect(transport);
+    });
+
+    app.post("/message", async (req, res) => {
+      console.error("Received message via HTTP POST");
+      if (transport) {
+        await transport.handlePostMessage(req, res);
+      } else {
+        res.status(400).send("No active SSE transport");
+      }
+    });
+
+    const PORT = process.env.PORT || 3000;
+    app.listen(PORT, "0.0.0.0", () => {
+      console.error(`NDC MCP Server running on http://0.0.0.0:${PORT}/sse`);
+    });
   }
 }
 
