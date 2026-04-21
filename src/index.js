@@ -79,7 +79,7 @@ class NdcMcpServer {
         throw new McpError(ErrorCode.InvalidRequest, `Invalid resource URI format: ${request.params.uri}. Expected ndc://{version}/schema/{filename}`);
       }
 
-      const filename = pathParts.slice(1).join("/");
+      const filename = decodeURIComponent(pathParts.slice(1).join("/"));
       this.validatePath(version, filename);
       const filePath = path.join(SCHEMAS_DIR, version, "raw", filename);
 
