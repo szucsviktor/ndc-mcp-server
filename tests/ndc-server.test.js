@@ -17,6 +17,9 @@ function escapeRegex(string) {
 }
 
 function validatePath(schemasDir, version, filename) {
+  if (version.includes("..") || version.includes("/") || version.includes("\\")) {
+    throw new Error(`Invalid version: ${version}`);
+  }
   const rawDir = path.resolve(schemasDir, version, "raw");
   const resolved = path.resolve(rawDir, filename);
   if (!resolved.startsWith(rawDir + path.sep) && resolved !== rawDir) {

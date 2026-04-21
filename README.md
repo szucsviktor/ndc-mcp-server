@@ -54,8 +54,9 @@ npx @modelcontextprotocol/inspector node src/index.js
 ### 2. Remote Usage (SSE / HTTP)
 To expose the server to the network so remote agents can hit it via an IP address:
 ```bash
-node src/index.js --sse
+npm run start:sse
 ```
+Or equivalently: `node src/index.js --sse`
 > By default, this listens on `0.0.0.0:3000`. You can change this by setting the `PORT` environment variable (e.g., `PORT=8080 node src/index.js --sse`).
 
 **Testing via MCP Inspector (SSE):**
@@ -109,8 +110,8 @@ The AI agent has access to the following functions:
 - **`list_ndc_schemas`**: Lists all available schema files for a given version.
 - **`search_ndc_schemas`**: Performs a regex search across all schemas in a version (e.g., query `"OfferInfo"`).
 - **`read_ndc_schema`**: Reads a snippet or the entirety of a raw schema file with line-range targeting.
-- **`get_schema_toc`**: Returns a Markdown list of every `<xs:element>` and `<xs:complexType>` in a file.
-- **`get_element_definition`**: The most powerful tool. Extrapolates only the exact XML block defining a requested element (e.g., `BaggageConformanceQualifyRQ`).
+- **`get_schema_toc`**: Returns a Markdown list of every `<xs:element>`, `<xs:complexType>`, and `<xs:simpleType>` in a file.
+- **`get_element_definition`**: The most powerful tool. Extracts only the exact XML block defining a requested element using balanced tag matching (e.g., `BaggageConformanceQualifyRQ`).
 
 ### Available Resources
 The raw schemas are exposed as direct MCP resources if an agent prefers direct URI access.
@@ -126,10 +127,29 @@ ndc-mcp-server/
 ├── schemas/
 │   └── 26.1/raw/            # Raw NDC v26.1 XSD and JSON standards
 ├── src/
-│   └── index.js             # Main Express & MCP SSE server implementation
+│   └── index.js             # MCP server (Stdio + Express/SSE dual transport)
+├── tests/
+│   ├── fixtures/            # Test schema fixtures
+│   └── ndc-server.test.js   # Unit tests (21 test cases)
+├── vitest.config.js         # Test runner configuration
 ├── package.json             # Node.js configuration
 └── .gitignore               # Standard git exclusions
 ```
+
+## 🧪 Running Tests
+
+```bash
+npm test             # Run all tests once
+npm run test:watch   # Run tests in watch mode
+```
+
+## 🩺 Health Check (SSE Mode)
+
+When running in SSE mode, a health endpoint is available:
+```bash
+curl http://localhost:3000/health
+```
+Returns: `{ "status": "ok", "activeSessions": 0, "uptime": 123.45 }`
 
 ## ⚖️ License
 Refer to the `IATA PSC Data Exchange Specifications License` included in the schemas folder for usage terms regarding the underlying IATA standards.

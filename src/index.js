@@ -222,12 +222,17 @@ class NdcMcpServer {
    * Validates that a path does not escape the version's raw schema directory (path traversal protection).
    */
   validatePath(version, filename) {
+    // Reject version strings containing path separators or traversal
+    if (version.includes("..") || version.includes("/") || version.includes("\\")) {
+      throw new McpError(ErrorCode.InvalidRequest, `Invalid version: ${version}`);
+    }
     const rawDir = path.resolve(SCHEMAS_DIR, version, "raw");
     const resolved = path.resolve(rawDir, filename);
     if (!resolved.startsWith(rawDir + path.sep) && resolved !== rawDir) {
       throw new McpError(ErrorCode.InvalidRequest, `Invalid path: ${filename}`);
     }
   }
+
 
 
   /**
