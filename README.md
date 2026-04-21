@@ -71,34 +71,107 @@ Or equivalently: `node src/index.js --sse`
 
 ## 🤖 Integrating with AI Tools
 
-### Connecting Claude Desktop (Local)
-To use this server with your local Claude Desktop app, edit your config file:
+All **local tools** (Claude Desktop, Cursor, Windsurf, VS Code) use **Stdio** mode — they spawn the server process themselves.
+All **remote agents** (LangChain, custom scripts) use **SSE** mode — you start the server first.
 
-**macOS:** `~/Library/Application Support/Claude/claude_desktop_config.json`
+---
 
+### Windsurf / Codeium (Cascade)
+
+Edit `~/.codeium/windsurf/mcp_config.json`:
 ```json
 {
   "mcpServers": {
-    "ndc-mcp": {
+    "ndc-schemas": {
       "command": "node",
-      "args": ["<absolute-path-to-your-project>/src/index.js"]
+      "args": ["/absolute/path/to/ndc-mpc/src/index.js"]
+    }
+  }
+}
+```
+Then click the **🔨 hammer icon** in Cascade → **Refresh MCP**.
+
+---
+
+### Claude Desktop
+
+Edit `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS):
+```json
+{
+  "mcpServers": {
+    "ndc-schemas": {
+      "command": "node",
+      "args": ["/absolute/path/to/ndc-mpc/src/index.js"]
+    }
+  }
+}
+```
+Restart Claude Desktop after saving.
+
+---
+
+### Claude Code (CLI)
+
+```bash
+claude mcp add ndc-schemas -- node /absolute/path/to/ndc-mpc/src/index.js
+```
+To verify it's connected, run `/mcp` inside the Claude Code REPL.
+
+---
+
+### Cursor
+
+Create `.cursor/mcp.json` in your project root (or `~/.cursor/mcp.json` globally):
+```json
+{
+  "mcpServers": {
+    "ndc-schemas": {
+      "command": "node",
+      "args": ["/absolute/path/to/ndc-mpc/src/index.js"]
+    }
+  }
+}
+```
+Reload the window (`Cmd+Shift+P` → **Reload Window**) after saving.
+
+---
+
+### VS Code (GitHub Copilot)
+
+Create `.vscode/mcp.json` in your project root:
+```json
+{
+  "servers": {
+    "ndc-schemas": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["/absolute/path/to/ndc-mpc/src/index.js"]
     }
   }
 }
 ```
 
-### Connecting Remote AI Agents (LangChain, etc.)
-Point your remote agent's MCP Client configuration to the Server-Sent Events endpoint:
+---
+
+### Remote Agents (LangChain, custom scripts, etc.)
+
+Start the server in SSE mode first:
+```bash
+npm run start:sse
+```
+Then point your agent at the SSE endpoint:
 ```text
 http://<SERVER_IP_ADDRESS>:3000/sse
 ```
 
+---
+
 ### Example AI Prompts
-Once your AI is connected to the server, you can give it highly complex prompts bridging NDC and your existing knowledge base:
+Once connected, use prompts like:
 
-> *"Search the NDC 26.1 schemas to find how 'Ancillaries' are modelled. Compare this structure to Navitaire's SSR (Special Service Request) model. What are the key differences in how pricing is attached to the service?"*
+> *"Search the NDC 26.1 schemas for how 'Ancillaries' are modelled. Compare this to Navitaire's SSR model — what are the key differences?"*
 
-> *"Use the `get_schema_toc` tool on `IATA_AirShoppingRQ.xsd` to list the root elements. Then, use `get_element_definition` to extract the definition of the shopping request payload."*
+> *"Use `get_schema_toc` on `IATA_AirShoppingRQ.xsd`, then use `get_element_definition` to extract the full definition of the root request element."*
 
 ---
 
