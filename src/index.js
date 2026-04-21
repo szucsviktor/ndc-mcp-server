@@ -1,6 +1,7 @@
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import {
   ListResourcesRequestSchema,
+  ListResourceTemplatesRequestSchema,
   ReadResourceRequestSchema,
   ListToolsRequestSchema,
   CallToolRequestSchema,
@@ -97,6 +98,18 @@ class NdcMcpServer {
       } catch (error) {
         throw new McpError(ErrorCode.InternalError, `Could not read file: ${error.message}`);
       }
+    });
+
+    this.server.setRequestHandler(ListResourceTemplatesRequestSchema, async () => {
+      const versions = await this.getVersions();
+      return {
+        resourceTemplates: versions.map((version) => ({
+          uriTemplate: `ndc://${version}/schema/{filename}`,
+          name: `NDC v${version} Schema File`,
+          mimeType: "application/xml",
+          description: `A specific NDC v${version} schema file. Supports .xsd and .json files.`,
+        })),
+      };
     });
   }
 
