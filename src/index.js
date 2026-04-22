@@ -11,14 +11,13 @@ import {
 import fs from "fs/promises";
 import path from "path";
 import { fileURLToPath } from "url";
-import express from "express";
-import cors from "cors";
-
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SCHEMAS_DIR = path.resolve(__dirname, "../schemas");
+const DEFAULT_VERSION = "26.1";
 
 class NdcMcpServer {
-  constructor() {
+  constructor(schemasDir = SCHEMAS_DIR) {
+    this.schemasDir = schemasDir;
     this.server = new Server(
       {
         name: "ndc-mcp-server",
@@ -35,10 +34,6 @@ class NdcMcpServer {
 
     this.setupHandlers();
     this.server.onerror = (error) => console.error("[MCP Error]", error);
-    process.on("SIGINT", async () => {
-      await this.server.close();
-      process.exit(0);
-    });
   }
 
   setupHandlers() {
@@ -82,7 +77,7 @@ class NdcMcpServer {
 
       const filename = decodeURIComponent(pathParts.slice(1).join("/"));
       this.validatePath(version, filename);
-      const filePath = path.join(SCHEMAS_DIR, version, "raw", filename);
+      const filePath = path.join(this.schemasDir, version, "raw", filename);
 
       try {
         const content = await fs.readFile(filePath, "utf-8");
@@ -194,31 +189,36 @@ class NdcMcpServer {
           return { content: [{ type: "text", text: (await this.getVersions()).join("\n") }] };
 
         case "list_ndc_schemas": {
-          const version = args.version || "26.1";
+          const version = args.version || DEFAULT_VERSION;
+          await this.validateVersion(version);
           const files = await this.getSchemaFiles(version);
           return { content: [{ type: "text", text: files.join("\n") }] };
         }
 
         case "search_ndc_schemas": {
-          const { query, version = "26.1" } = args;
+          const { query, version = DEFAULT_VERSION } = args;
+          await this.validateVersion(version);
           const results = await this.searchInSchemas(version, query);
           return { content: [{ type: "text", text: results }] };
         }
 
         case "read_ndc_schema": {
-          const { filename, version = "26.1", startLine, endLine } = args;
+          const { filename, version = DEFAULT_VERSION, startLine, endLine } = args;
+          await this.validateVersion(version);
           const content = await this.readSchemaFile(version, filename, startLine, endLine);
           return { content: [{ type: "text", text: content }] };
         }
 
         case "get_schema_toc": {
-          const { filename, version = "26.1" } = args;
+          const { filename, version = DEFAULT_VERSION } = args;
+          await this.validateVersion(version);
           const toc = await this.getSchemaTOC(version, filename);
           return { content: [{ type: "text", text: toc }] };
         }
 
         case "get_element_definition": {
-          const { elementName, version = "26.1" } = args;
+          const { elementName, version = DEFAULT_VERSION } = args;
+          await this.validateVersion(version);
           const definition = await this.getElementDefinition(version, elementName);
           return { content: [{ type: "text", text: definition }] };
         }
@@ -231,6 +231,13 @@ class NdcMcpServer {
 
   // --- Utility Methods ---
 
+  async validateVersion(version) {
+    const known = await this.getVersions();
+    if (!known.includes(version)) {
+      throw new McpError(ErrorCode.InvalidRequest, `Unknown NDC version: ${version}. Available: ${known.join(", ")}`);
+    }
+  }
+
   /**
    * Validates that a path does not escape the version's raw schema directory (path traversal protection).
    */
@@ -239,7 +246,7 @@ class NdcMcpServer {
     if (version.includes("..") || version.includes("/") || version.includes("\\")) {
       throw new McpError(ErrorCode.InvalidRequest, `Invalid version: ${version}`);
     }
-    const rawDir = path.resolve(SCHEMAS_DIR, version, "raw");
+    const rawDir = path.resolve(this.schemasDir, version, "raw");
     const resolved = path.resolve(rawDir, filename);
     if (!resolved.startsWith(rawDir + path.sep) && resolved !== rawDir) {
       throw new McpError(ErrorCode.InvalidRequest, `Invalid path: ${filename}`);
@@ -257,16 +264,17 @@ class NdcMcpServer {
 
   async getVersions() {
     try {
-      const entries = await fs.readdir(SCHEMAS_DIR, { withFileTypes: true });
+      const entries = await fs.readdir(this.schemasDir, { withFileTypes: true });
       return entries.filter((e) => e.isDirectory()).map((e) => e.name);
     } catch (error) {
-      return [];
+      if (error.code === "ENOENT") return [];
+      throw new McpError(ErrorCode.InternalError, `Could not read schemas directory: ${error.message}`);
     }
   }
 
   async getSchemaFiles(version, subDir = "") {
     // Always search within the "raw" subdirectory
-    const baseDir = path.join(SCHEMAS_DIR, version, "raw");
+    const baseDir = path.join(this.schemasDir, version, "raw");
     const dirPath = path.join(baseDir, subDir);
     try {
       const entries = await fs.readdir(dirPath, { withFileTypes: true });
@@ -281,13 +289,14 @@ class NdcMcpServer {
       }
       return files;
     } catch (error) {
-      return [];
+      if (error.code === "ENOENT") return [];
+      throw new McpError(ErrorCode.InternalError, `Could not read schema directory: ${error.message}`);
     }
   }
 
   async readSchemaFile(version, filename, startLine, endLine) {
     this.validatePath(version, filename);
-    const filePath = path.join(SCHEMAS_DIR, version, "raw", filename);
+    const filePath = path.join(this.schemasDir, version, "raw", filename);
     try {
       const content = await fs.readFile(filePath, "utf-8");
       if (startLine !== undefined || endLine !== undefined) {
@@ -304,9 +313,10 @@ class NdcMcpServer {
 
   async getSchemaTOC(version, filename) {
     this.validatePath(version, filename);
-    const filePath = path.join(SCHEMAS_DIR, version, "raw", filename);
+    const filePath = path.join(this.schemasDir, version, "raw", filename);
     try {
       const content = await fs.readFile(filePath, "utf-8");
+      // Assumes IATA schemas always use the xs: namespace prefix; multiline or reordered attributes would be missed
       const elements = [...content.matchAll(/<xs:element[^>]+name="([^"]+)"/g)].map(m => m[1]);
       const types = [...content.matchAll(/<xs:complexType[^>]+name="([^"]+)"/g)].map(m => m[1]);
       const simpleTypes = [...content.matchAll(/<xs:simpleType[^>]+name="([^"]+)"/g)].map(m => m[1]);
@@ -335,8 +345,13 @@ class NdcMcpServer {
     const escapedName = NdcMcpServer.escapeRegex(elementName);
 
     for (const file of files) {
-      const filePath = path.join(SCHEMAS_DIR, version, "raw", file);
-      const content = await fs.readFile(filePath, "utf-8");
+      const filePath = path.join(this.schemasDir, version, "raw", file);
+      let content;
+      try {
+        content = await fs.readFile(filePath, "utf-8");
+      } catch (error) {
+        throw new McpError(ErrorCode.InternalError, `Error reading file ${file}: ${error.message}`);
+      }
 
       // Try complexType first
       const typeResult = this.extractXmlBlock(content, "xs:complexType", escapedName);
@@ -366,12 +381,12 @@ class NdcMcpServer {
     const startIndex = match.index;
     const shortTag = tagName; // e.g., "xs:complexType"
 
-    // Check for self-closing tag first
-    const selfCloseCheck = content.indexOf("/>", match.index + match[0].length);
-    const nextClose = content.indexOf(">", match.index + match[0].length);
-    if (nextClose === selfCloseCheck + 1) {
-      // This is a self-closing tag like <xs:element name="Foo" type="Bar"/>
-      return content.substring(startIndex, selfCloseCheck + 2);
+    // Check for self-closing tag: scan from end of match to the next ">" and test if it's "/>"
+    const afterMatch = match.index + match[0].length;
+    const nextClose = content.indexOf(">", afterMatch);
+    const isSelfClosing = nextClose > 0 && content[nextClose - 1] === "/";
+    if (isSelfClosing) {
+      return content.substring(startIndex, nextClose + 1);
     }
 
     // Count nested open/close tags to find the matching closing tag
@@ -413,7 +428,7 @@ class NdcMcpServer {
     let results = "";
 
     for (const file of files) {
-      const filePath = path.join(SCHEMAS_DIR, version, "raw", file);
+      const filePath = path.join(this.schemasDir, version, "raw", file);
       const content = await fs.readFile(filePath, "utf-8");
       const lines = content.split("\n");
 
@@ -433,10 +448,17 @@ class NdcMcpServer {
   }
 
   async run() {
+    process.on("SIGINT", async () => {
+      await this.server.close();
+      process.exit(0);
+    });
+
     // Determine transport mode from CLI args or ENV
     const useSSE = process.argv.includes("--sse") || process.env.SSE === "true";
 
     if (useSSE) {
+      const { default: express } = await import("express");
+      const { default: cors } = await import("cors");
       const app = express();
       app.use(cors());
       // NOTE: Do NOT use express.json() globally. SSEServerTransport.handlePostMessage
@@ -479,8 +501,9 @@ class NdcMcpServer {
       });
 
       const PORT = process.env.PORT || 3000;
-      app.listen(PORT, "0.0.0.0", () => {
-        console.error(`NDC MCP Server running on http://0.0.0.0:${PORT}/sse`);
+      const HOST = process.env.HOST || "0.0.0.0";
+      app.listen(PORT, HOST, () => {
+        console.error(`NDC MCP Server running on http://${HOST}:${PORT}/sse`);
       });
     } else {
       // Default to STDIO transport (Standard for local usage and Claude Desktop)
@@ -494,5 +517,7 @@ class NdcMcpServer {
 
 export { NdcMcpServer, SCHEMAS_DIR };
 
-const server = new NdcMcpServer();
-server.run().catch(console.error);
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  const server = new NdcMcpServer();
+  server.run().catch(console.error);
+}
