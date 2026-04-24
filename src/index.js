@@ -465,15 +465,35 @@ class NdcMcpServer {
       // reads the raw request body itself. If express.json() consumes the stream first,
       // handlePostMessage will fail with "stream is not readable".
 
+      // Health probe — Claude CLI sends POST /sse before opening the SSE stream
+      app.post("/sse", (req, res) => {
+        res.json({ ok: true });
+      });
+
       app.get("/sse", async (req, res) => {
         console.error("New SSE connection established");
         const { SSEServerTransport } = await import("@modelcontextprotocol/sdk/server/sse.js");
         const transport = new SSEServerTransport("/messages", res);
 
+        // Send ready event so the client knows the stream is live
+        res.write(
+          `data: ${JSON.stringify({
+            type: "ready",
+            version: "1.0.0",
+            serverInfo: { name: "ndc-mcp-server", version: "1.0.0" },
+            capabilities: { resources: {}, tools: {} },
+          })}\n\n`
+        );
+
         this.transports.set(transport.sessionId, transport);
+
+        const heartbeat = setInterval(() => {
+          if (!res.writableEnded) res.write('data: {"type":"ping"}\n\n');
+        }, 15000);
 
         res.on("close", () => {
           console.error(`SSE connection closed for session: ${transport.sessionId}`);
+          clearInterval(heartbeat);
           this.transports.delete(transport.sessionId);
         });
 
