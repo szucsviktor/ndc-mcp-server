@@ -475,16 +475,6 @@ class NdcMcpServer {
         const { SSEServerTransport } = await import("@modelcontextprotocol/sdk/server/sse.js");
         const transport = new SSEServerTransport("/messages", res);
 
-        // Send ready event so the client knows the stream is live
-        res.write(
-          `data: ${JSON.stringify({
-            type: "ready",
-            version: "1.0.0",
-            serverInfo: { name: "ndc-mcp-server", version: "1.0.0" },
-            capabilities: { resources: {}, tools: {} },
-          })}\n\n`
-        );
-
         this.transports.set(transport.sessionId, transport);
 
         const heartbeat = setInterval(() => {

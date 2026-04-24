@@ -25,6 +25,9 @@ yarn-error.log*
 # AI tooling
 .codemie/
 
+# Specs that do not go to the repository
+spec-unfollow/
+
 # Editor
 .vscode/
 .idea/
